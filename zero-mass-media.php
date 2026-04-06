@@ -42,7 +42,7 @@ final class Zero_Mass_Media {
     }
 
     private function __construct() {
-        $this->options = get_option('zmm_settings', $this->get_default_options());
+        $this->options = $this->get_options();
         $this->add_hooks();
     }
 
@@ -62,6 +62,13 @@ final class Zero_Mass_Media {
             'cron_schedule' => 'daily',
             'backup_cleanup_days' => 30,
         ];
+    }
+
+    private function get_options() {
+        $saved = get_option('zmm_settings', []);
+        $saved = is_array($saved) ? $saved : [];
+
+        return wp_parse_args($saved, $this->get_default_options());
     }
 
     public function add_hooks() {
@@ -99,7 +106,7 @@ final class Zero_Mass_Media {
 
     public static function activate() {
         $instance = self::get_instance();
-        $instance->options = get_option('zmm_settings', $instance->get_default_options());
+        $instance->options = $instance->get_options();
         $instance->setup_cron_schedule();
     }
 
@@ -366,7 +373,7 @@ final class Zero_Mass_Media {
             wp_send_json_error(['message' => __('Permission denied.', 'zero-mass-media')], 403);
         }
 
-        $this->options = get_option('zmm_settings', $this->get_default_options());
+        $this->options = $this->get_options();
         wp_send_json_success($this->get_dashboard_payload());
     }
 
@@ -631,7 +638,7 @@ final class Zero_Mass_Media {
             return;
         }
 
-        $this->options = get_option('zmm_settings', $this->get_default_options());
+        $this->options = $this->get_options();
 
         if (!empty($this->options['auto_process_on_upload'])) {
             if (!empty($this->options['process_backlog_via_cron'])) {
@@ -1323,7 +1330,7 @@ final class Zero_Mass_Media {
     }
 
     public function setup_cron_schedule($new_schedule = null) {
-        $this->options = get_option('zmm_settings', $this->get_default_options());
+        $this->options = $this->get_options();
         $maintenance_schedule = $new_schedule ?: ($this->options['cron_schedule'] ?? 'daily');
         $queue_schedule = $this->options['queue_schedule'] ?? 'zmm_every_fifteen_minutes';
 
@@ -1359,7 +1366,7 @@ final class Zero_Mass_Media {
     }
 
     public function run_processing_queue() {
-        $this->options = get_option('zmm_settings', $this->get_default_options());
+        $this->options = $this->get_options();
         if (empty($this->options['process_backlog_via_cron'])) {
             return;
         }
