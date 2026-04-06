@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .zmm-app {
+    @apply mt-6 text-slate-900;
+  }
+
+  .zmm-shell {
+    @apply mx-auto max-w-7xl space-y-6;
+  }
+
+  .zmm-hero {
+    @apply rounded-4xl border border-slate-200 bg-white/95 p-8 shadow-panel;
+  }
+
+  .zmm-grid {
+    @apply grid gap-6 xl:grid-cols-[1.35fr_0.85fr];
+  }
+
+  .zmm-stack {
+    @apply space-y-6;
+  }
+
+  .zmm-card {
+    @apply rounded-4xl border border-slate-200 bg-white p-6 shadow-panel;
+  }
+
+  .zmm-card-title {
+    @apply text-lg font-semibold text-slate-950;
+  }
+
+  .zmm-stat-grid {
+    @apply mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4;
+  }
+
+  .zmm-stat {
+    @apply rounded-3xl border border-slate-200 bg-slate-50 p-4;
+  }
+
+  .zmm-stat-label {
+    @apply text-xs font-semibold uppercase tracking-[0.16em] text-slate-500;
+  }
+
+  .zmm-stat-value {
+    @apply mt-3 text-2xl font-semibold text-slate-950;
+  }
+
+  .zmm-form-grid {
+    @apply mt-5 grid gap-4 md:grid-cols-2;
+  }
+
+  .zmm-control {
+    @apply space-y-2;
+  }
+
+  .zmm-label {
+    @apply text-sm font-medium text-slate-800;
+  }
+
+  .zmm-hint {
+    @apply text-sm text-slate-500;
+  }
+
+  .zmm-input,
+  .zmm-select {
+    @apply w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-inkfire-teal focus:ring-2 focus:ring-inkfire-mint/30;
+  }
+
+  .zmm-toggle {
+    @apply flex items-start gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4;
+  }
+
+  .zmm-toggle input {
+    @apply mt-1 h-4 w-4 rounded border-slate-300 text-inkfire-teal focus:ring-inkfire-mint/40;
+  }
+
+  .zmm-actions {
+    @apply flex flex-wrap gap-3 pt-2;
+  }
+
+  .zmm-button {
+    @apply inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition;
+  }
+
+  .zmm-button-primary {
+    @apply zmm-button bg-slate-950 text-white hover:bg-slate-800;
+  }
+
+  .zmm-button-secondary {
+    @apply zmm-button border border-slate-300 bg-white text-slate-900 hover:bg-slate-50;
+  }
+
+  .zmm-pill {
+    @apply inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500;
+  }
+
+  .zmm-alert {
+    @apply rounded-3xl border px-4 py-3 text-sm;
+  }
+
+  .zmm-alert-error {
+    @apply border-red-200 bg-red-50 text-red-700;
+  }
+
+  .zmm-alert-success {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-700;
+  }
+}

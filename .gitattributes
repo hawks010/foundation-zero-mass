@@ -1,0 +1,7 @@
+/node_modules export-ignore
+/.DS_Store export-ignore
+/src export-ignore
+/tailwind.config.js export-ignore
+/package.json export-ignore
+/package-lock.json export-ignore
+/zero-mass-media.php.bak-* export-ignore
