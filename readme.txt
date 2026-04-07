@@ -3,7 +3,7 @@ Contributors: inkfire
 Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 8.1.0
+Stable tag: 8.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -21,6 +21,7 @@ Features include:
 * optional original backups and restore support
 * concise alt text generation
 * compression profiles and quality guard
+* large file watchdog for oversized uploads
 * protected brand asset and exclusion rules
 * LCP image hints for likely featured hero images
 * Elementor/Divi-aware audit signals
@@ -34,6 +35,10 @@ Features include:
 3. Open **Foundation > Zero Mass** to configure optimization and queue behavior.
 
 == Changelog ==
+
+= 8.1.1 =
+* Added Large File Watchdog to flag and auto-queue uploads above the configurable oversized file threshold.
+* Added oversized pending counts and dynamic threshold labels to the admin audit.
 
 = 8.1.0 =
 * Added compression profiles for balanced, performance, brand-quality, and low-bandwidth workflows.

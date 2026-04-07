@@ -3,7 +3,7 @@
  * Plugin Name:       Foundation: Zero Mass
  * Plugin URI:        https://inkfire.co.uk
  * Description:       Advanced image optimization with LQIP, smart WebP/AVIF conversion, and accessibility features.
- * Version:           8.1.0
+ * Version:           8.1.1
  * Author:            Inkfire Limited
  * Author URI:        https://inkfire.co.uk
  * License:           GPLv2 or later
@@ -16,7 +16,7 @@
 defined('ABSPATH') || exit;
 
 // Constants
-define('ZMM_VERSION', '8.1.0');
+define('ZMM_VERSION', '8.1.1');
 define('ZMM_FILE', __FILE__);
 define('ZMM_PATH', plugin_dir_path(ZMM_FILE));
 define('ZMM_URL', plugin_dir_url(ZMM_FILE));
@@ -58,6 +58,8 @@ final class Zero_Mass_Media {
             'max_width' => 1920,
             'max_height' => 1920,
             'quality_guard_min_saving' => 3,
+            'oversized_file_threshold_mb' => 1,
+            'auto_queue_oversized_uploads' => '1',
             'enable_lqip' => '1',
             'enable_lcp_preload' => '1',
             'enable_builder_audit' => '1',
@@ -278,6 +280,7 @@ final class Zero_Mass_Media {
             'enable_lcp_preload',
             'enable_builder_audit',
             'protect_brand_assets',
+            'auto_queue_oversized_uploads',
         ];
 
         $new_input = $defaults;
@@ -313,6 +316,7 @@ final class Zero_Mass_Media {
         $new_input['max_width'] = max(320, absint($input['max_width'] ?? $defaults['max_width']));
         $new_input['max_height'] = max(320, absint($input['max_height'] ?? $defaults['max_height']));
         $new_input['quality_guard_min_saving'] = max(0, min(50, absint($input['quality_guard_min_saving'] ?? $defaults['quality_guard_min_saving'])));
+        $new_input['oversized_file_threshold_mb'] = max(1, min(20, absint($input['oversized_file_threshold_mb'] ?? $defaults['oversized_file_threshold_mb'])));
         $new_input['backup_cleanup_days'] = absint($input['backup_cleanup_days'] ?? $defaults['backup_cleanup_days']);
         $new_input['queue_batch_size'] = max(1, min(25, absint($input['queue_batch_size'] ?? $defaults['queue_batch_size'])));
         $new_input['exclude_attachment_ids'] = sanitize_text_field(wp_unslash($input['exclude_attachment_ids'] ?? $defaults['exclude_attachment_ids']));
@@ -373,6 +377,19 @@ final class Zero_Mass_Media {
 
     private function get_excluded_filename_patterns() {
         return array_map('strtolower', $this->parse_csv_setting($this->options['exclude_filename_patterns'] ?? ''));
+    }
+
+    private function get_oversized_threshold_bytes() {
+        return max(1, absint($this->options['oversized_file_threshold_mb'] ?? 1)) * MB_IN_BYTES;
+    }
+
+    private function get_attachment_file_size($attachment_id) {
+        $filepath = get_attached_file($attachment_id);
+        return ($filepath && file_exists($filepath)) ? (int) filesize($filepath) : 0;
+    }
+
+    private function is_attachment_over_size_threshold($attachment_id) {
+        return $this->get_attachment_file_size($attachment_id) > $this->get_oversized_threshold_bytes();
     }
 
     private function is_likely_brand_asset($attachment_id) {
@@ -463,10 +480,13 @@ final class Zero_Mass_Media {
         ]));
 
         $featured_ids = $this->get_featured_image_ids();
+        $oversized_threshold = $this->get_oversized_threshold_bytes();
         $report = [
             'total_images' => 0,
             'missing_alt' => 0,
             'oversized_files' => 0,
+            'oversized_pending' => 0,
+            'oversized_threshold' => $oversized_threshold,
             'oversized_dimensions' => 0,
             'missing_modern_formats' => 0,
             'excluded_assets' => 0,
@@ -496,9 +516,12 @@ final class Zero_Mass_Media {
                 $issues[] = __('Missing alt text.', 'zero-mass-media');
             }
 
-            if ($filesize > MB_IN_BYTES) {
+            if ($filesize > $oversized_threshold) {
                 $report['oversized_files']++;
-                $issues[] = __('File is over 1MB.', 'zero-mass-media');
+                if (!$is_excluded && !get_post_meta($attachment_id, '_zmm_processed', true)) {
+                    $report['oversized_pending']++;
+                }
+                $issues[] = sprintf(__('File is over %sMB.', 'zero-mass-media'), absint($this->options['oversized_file_threshold_mb'] ?? 1));
             }
 
             if ($dimensions && ($dimensions[0] > (int) $this->options['max_width'] || $dimensions[1] > (int) $this->options['max_height'])) {
@@ -847,6 +870,27 @@ final class Zero_Mass_Media {
         }
 
         $this->options = $this->get_options();
+        $is_oversized_upload = $this->is_attachment_over_size_threshold($attachment_id);
+        $exclusion_reason = $this->is_attachment_excluded($attachment_id);
+
+        if ($is_oversized_upload) {
+            update_post_meta($attachment_id, '_zmm_large_file_detected', 1);
+            update_post_meta($attachment_id, '_zmm_large_file_size', $this->get_attachment_file_size($attachment_id));
+            update_post_meta($attachment_id, '_zmm_large_file_threshold', $this->get_oversized_threshold_bytes());
+            update_post_meta($attachment_id, '_zmm_large_file_detected_at', time());
+
+            if ($exclusion_reason) {
+                update_post_meta($attachment_id, '_zmm_large_file_status', 'excluded');
+                update_post_meta($attachment_id, '_zmm_excluded_reason', $exclusion_reason);
+            } elseif (!empty($this->options['auto_queue_oversized_uploads']) && !empty($this->options['process_backlog_via_cron'])) {
+                if ($this->queue_attachment_for_processing($attachment_id, 'oversized-upload')) {
+                    update_post_meta($attachment_id, '_zmm_large_file_status', 'queued');
+                    $this->schedule_queue_runner(15);
+                }
+            } else {
+                update_post_meta($attachment_id, '_zmm_large_file_status', 'detected');
+            }
+        }
 
         if (!empty($this->options['auto_process_on_upload'])) {
             if (!empty($this->options['process_backlog_via_cron'])) {
@@ -1344,6 +1388,10 @@ final class Zero_Mass_Media {
         update_post_meta($attachment_id, '_zmm_processed', true);
         update_post_meta($attachment_id, '_zmm_saved_percent', $saved_percent);
         update_post_meta($attachment_id, '_zmm_bytes_saved', $space_saved);
+        if (get_post_meta($attachment_id, '_zmm_large_file_detected', true)) {
+            update_post_meta($attachment_id, '_zmm_large_file_status', $compressed_size > $this->get_oversized_threshold_bytes() ? 'still-large' : 'optimized');
+            update_post_meta($attachment_id, '_zmm_large_file_size_after', $compressed_size);
+        }
         
         return [
             'message' => "Smartly Optimized! Saved {$saved_percent}%",

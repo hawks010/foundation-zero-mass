@@ -11,6 +11,7 @@ Foundation: Zero Mass is Inkfire's WordPress media optimization plugin for safe 
 - Creates optional backup copies for restore workflows
 - Generates concise alt text from filenames and parent context
 - Adds compression profiles for balanced, performance, brand-quality, and low-bandwidth use cases
+- Flags and auto-queues oversized uploads above the configurable Large File Watchdog threshold
 - Protects brand assets, logos, QR codes, badges, and configured exclusions from destructive rewrites
 - Reports missing alt text, oversized files, missing modern formats, LCP candidates, and builder usage
 - Adds LCP preload/fetch-priority hints for likely featured hero images

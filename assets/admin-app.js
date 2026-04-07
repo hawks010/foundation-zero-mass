@@ -16,6 +16,7 @@
     ['enable_lcp_preload', 'LCP image intelligence', 'Preload and mark likely featured hero images as high priority.'],
     ['enable_builder_audit', 'Builder-aware audit', 'Include Elementor and Divi usage signals in the report.'],
     ['protect_brand_assets', 'Protect brand assets', 'Skip likely logos, QR codes, icons, badges, and signature files.'],
+    ['auto_queue_oversized_uploads', 'Large file watchdog', 'Automatically queue uploads above the oversized file threshold, even if normal upload processing is paused.'],
   ];
 
   const profileOptions = [
@@ -76,11 +77,13 @@
       enable_lcp_preload: settings.enable_lcp_preload === '1',
       enable_builder_audit: settings.enable_builder_audit === '1',
       protect_brand_assets: settings.protect_brand_assets === '1',
+      auto_queue_oversized_uploads: settings.auto_queue_oversized_uploads === '1',
       overall_quality: settings.overall_quality || 'recommended',
       compression_profile: settings.compression_profile || 'balanced',
       max_width: settings.max_width || 1920,
       max_height: settings.max_height || 1920,
       quality_guard_min_saving: settings.quality_guard_min_saving || 3,
+      oversized_file_threshold_mb: settings.oversized_file_threshold_mb || 1,
       exclude_attachment_ids: settings.exclude_attachment_ids || '',
       exclude_filename_patterns: settings.exclude_filename_patterns || '',
       exclude_mime_types: settings.exclude_mime_types || 'image/svg+xml',
@@ -161,7 +164,7 @@
         ['Space saved', formatBytes(payload.stats.total_savings || 0)],
         ['Queued', payload.queue.queued || 0],
         ['Needs processing', payload.queue.unprocessed || 0],
-        ['Audit issues', (payload.audit.missing_alt || 0) + (payload.audit.oversized_files || 0) + (payload.audit.missing_modern_formats || 0)],
+        ['Audit issues', (payload.audit.missing_alt || 0) + (payload.audit.oversized_files || 0) + (payload.audit.oversized_pending || 0) + (payload.audit.missing_modern_formats || 0)],
         ['LCP candidates', payload.audit.lcp_candidates || 0],
       ];
     }, [payload]);
@@ -190,6 +193,8 @@
     if (loading || !settings || !payload) {
       return h('div', { className: 'zmm-app zmm-shell' }, h('div', { className: 'zmm-card' }, 'Loading Zero Mass…'));
     }
+
+    const oversizedLabel = payload.audit.oversized_threshold ? formatBytes(payload.audit.oversized_threshold) : '1 MB';
 
     return h('div', { className: 'zmm-app' },
       h('div', { className: 'zmm-shell' }, [
@@ -243,6 +248,16 @@
                     max: '50',
                     value: settings.quality_guard_min_saving,
                     onChange: (event) => setSettings((current) => Object.assign({}, current, { quality_guard_min_saving: event.target.value })),
+                  })
+                ),
+                h(Field, { key: 'oversizedThreshold', label: 'Oversized file threshold (MB)', hint: 'Uploads above this size are flagged and can be auto-queued by the Large File Watchdog.' },
+                  h('input', {
+                    className: 'zmm-input',
+                    type: 'number',
+                    min: '1',
+                    max: '20',
+                    value: settings.oversized_file_threshold_mb,
+                    onChange: (event) => setSettings((current) => Object.assign({}, current, { oversized_file_threshold_mb: event.target.value })),
                   })
                 ),
                 h(Field, { key: 'batch', label: 'Queue batch size', hint: 'How many images to process during each cron run.' },
@@ -354,7 +369,8 @@
               h('h2', { key: 'title', className: 'zmm-card-title' }, 'Gold standard audit'),
               h('div', { key: 'auditGrid', className: 'mt-5 grid gap-3 text-sm text-slate-600' }, [
                 h('div', { key: 'missingAlt' }, 'Missing alt text: ' + payload.audit.missing_alt),
-                h('div', { key: 'largeFiles' }, 'Files over 1MB: ' + payload.audit.oversized_files),
+                h('div', { key: 'largeFiles' }, 'Files over ' + oversizedLabel + ': ' + payload.audit.oversized_files),
+                h('div', { key: 'largePending' }, 'Large files awaiting action: ' + payload.audit.oversized_pending),
                 h('div', { key: 'dimensions' }, 'Oversized dimensions: ' + payload.audit.oversized_dimensions),
                 h('div', { key: 'formats' }, 'Missing WebP/AVIF: ' + payload.audit.missing_modern_formats),
                 h('div', { key: 'excluded' }, 'Protected/excluded assets: ' + payload.audit.excluded_assets),
@@ -372,7 +388,7 @@
               h('ul', { key: 'list', className: 'mt-4 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600' }, [
                 h('li', { key: 'item-1' }, 'Compression profiles let you switch between performance, brand quality, and low-bandwidth defaults.'),
                 h('li', { key: 'item-2' }, 'The quality guard prevents low-value rewrites when compression would not save enough.'),
-                h('li', { key: 'item-3' }, 'The audit highlights missing alt text, large files, missing modern formats, LCP candidates, and builder usage.'),
+                h('li', { key: 'item-3' }, 'Large File Watchdog flags and auto-queues uploads above your configured oversized threshold.'),
                 h('li', { key: 'item-4' }, 'WP-CLI commands are available as wp zeromass report, queue, process-queue, optimize, and restore.'),
               ]),
             ]),
