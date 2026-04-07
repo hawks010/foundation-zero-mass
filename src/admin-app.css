@@ -107,4 +107,20 @@
   .zmm-alert-success {
     @apply border-emerald-200 bg-emerald-50 text-emerald-700;
   }
+
+  .zmm-audit-list {
+    @apply mt-5 space-y-3;
+  }
+
+  .zmm-audit-item {
+    @apply rounded-2xl border border-amber-200 bg-amber-50/80 p-3 text-sm text-slate-700;
+  }
+
+  .zmm-audit-item strong {
+    @apply block font-semibold text-slate-950;
+  }
+
+  .zmm-audit-item span {
+    @apply mt-1 block leading-6 text-slate-600;
+  }
 }

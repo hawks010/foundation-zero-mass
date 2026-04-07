@@ -13,12 +13,16 @@
     ['keep_original_backup', 'Keep originals', 'Store the original file for safe rollback and comparison.'],
     ['auto_generate_alt', 'Generate alt text', 'Create concise descriptive alt text from filenames and parent content.'],
     ['enable_lqip', 'Enable LQIP placeholders', 'Use tiny blurred placeholders while lazy loading large images.'],
+    ['enable_lcp_preload', 'LCP image intelligence', 'Preload and mark likely featured hero images as high priority.'],
+    ['enable_builder_audit', 'Builder-aware audit', 'Include Elementor and Divi usage signals in the report.'],
+    ['protect_brand_assets', 'Protect brand assets', 'Skip likely logos, QR codes, icons, badges, and signature files.'],
   ];
 
-  const qualityOptions = [
-    ['recommended', 'Recommended'],
-    ['high', 'High'],
-    ['highest', 'Highest'],
+  const profileOptions = [
+    ['balanced', 'Balanced'],
+    ['maximum_performance', 'Maximum performance'],
+    ['brand_quality', 'Brand / portfolio quality'],
+    ['accessibility_low_bandwidth', 'Accessibility / low bandwidth'],
   ];
 
   const maintenanceSchedules = [
@@ -69,9 +73,17 @@
       keep_original_backup: settings.keep_original_backup === '1',
       auto_generate_alt: settings.auto_generate_alt === '1',
       enable_lqip: settings.enable_lqip === '1',
+      enable_lcp_preload: settings.enable_lcp_preload === '1',
+      enable_builder_audit: settings.enable_builder_audit === '1',
+      protect_brand_assets: settings.protect_brand_assets === '1',
       overall_quality: settings.overall_quality || 'recommended',
+      compression_profile: settings.compression_profile || 'balanced',
       max_width: settings.max_width || 1920,
       max_height: settings.max_height || 1920,
+      quality_guard_min_saving: settings.quality_guard_min_saving || 3,
+      exclude_attachment_ids: settings.exclude_attachment_ids || '',
+      exclude_filename_patterns: settings.exclude_filename_patterns || '',
+      exclude_mime_types: settings.exclude_mime_types || 'image/svg+xml',
       queue_batch_size: settings.queue_batch_size || 3,
       queue_schedule: settings.queue_schedule || 'zmm_every_fifteen_minutes',
       cron_schedule: settings.cron_schedule || 'daily',
@@ -149,6 +161,8 @@
         ['Space saved', formatBytes(payload.stats.total_savings || 0)],
         ['Queued', payload.queue.queued || 0],
         ['Needs processing', payload.queue.unprocessed || 0],
+        ['Audit issues', (payload.audit.missing_alt || 0) + (payload.audit.oversized_files || 0) + (payload.audit.missing_modern_formats || 0)],
+        ['LCP candidates', payload.audit.lcp_candidates || 0],
       ];
     }, [payload]);
 
@@ -183,7 +197,7 @@
           h('span', { key: 'eyebrow', className: 'zmm-pill' }, 'Foundation: Zero Mass'),
           h('div', { key: 'titleWrap', className: 'mt-4 space-y-3' }, [
             h('h1', { key: 'title', className: 'text-3xl font-semibold tracking-tight text-slate-950' }, 'Media compression that can finally run in the background'),
-            h('p', { key: 'copy', className: 'max-w-3xl text-base leading-7 text-slate-600' }, 'This pass modernises Zero Mass into a safer queue-driven optimizer: uploads can be queued, cron can process the backlog automatically, and the settings page is now ready for a React admin shell with a Tailwind-based layout.'),
+            h('p', { key: 'copy', className: 'max-w-3xl text-base leading-7 text-slate-600' }, 'Zero Mass is now a local-first image performance system: compression profiles, protected brand assets, builder-aware audits, LCP hints, queue automation, and reversible optimization in one place.'),
           ]),
         ]),
         error ? h('div', { key: 'error', className: 'zmm-alert zmm-alert-error' }, error) : null,
@@ -217,9 +231,19 @@
                 h(Field, { key: 'quality', label: 'Compression profile', hint: 'Applies format-aware quality values for JPEG, WebP, and AVIF.' },
                   h('select', {
                     className: 'zmm-select',
-                    value: settings.overall_quality,
-                    onChange: (event) => setSettings((current) => Object.assign({}, current, { overall_quality: event.target.value })),
-                  }, qualityOptions.map(([value, label]) => h('option', { key: value, value }, label)))
+                    value: settings.compression_profile,
+                    onChange: (event) => setSettings((current) => Object.assign({}, current, { compression_profile: event.target.value })),
+                  }, profileOptions.map(([value, label]) => h('option', { key: value, value }, label)))
+                ),
+                h(Field, { key: 'guard', label: 'Minimum saving guard (%)', hint: 'Do not replace the original unless a non-resize compression pass saves at least this much.' },
+                  h('input', {
+                    className: 'zmm-input',
+                    type: 'number',
+                    min: '0',
+                    max: '50',
+                    value: settings.quality_guard_min_saving,
+                    onChange: (event) => setSettings((current) => Object.assign({}, current, { quality_guard_min_saving: event.target.value })),
+                  })
                 ),
                 h(Field, { key: 'batch', label: 'Queue batch size', hint: 'How many images to process during each cron run.' },
                   h('input', {
@@ -272,6 +296,30 @@
                     onChange: (event) => setSettings((current) => Object.assign({}, current, { backup_cleanup_days: event.target.value })),
                   })
                 ),
+                h(Field, { key: 'excludeIds', label: 'Excluded attachment IDs', hint: 'Comma-separated attachment IDs to never compress.' },
+                  h('input', {
+                    className: 'zmm-input',
+                    type: 'text',
+                    value: settings.exclude_attachment_ids,
+                    onChange: (event) => setSettings((current) => Object.assign({}, current, { exclude_attachment_ids: event.target.value })),
+                  })
+                ),
+                h(Field, { key: 'excludePatterns', label: 'Protected filename patterns', hint: 'Comma-separated partial filenames such as logo, qr, icon, brand.' },
+                  h('input', {
+                    className: 'zmm-input',
+                    type: 'text',
+                    value: settings.exclude_filename_patterns,
+                    onChange: (event) => setSettings((current) => Object.assign({}, current, { exclude_filename_patterns: event.target.value })),
+                  })
+                ),
+                h(Field, { key: 'excludeMimes', label: 'Excluded MIME types', hint: 'Comma-separated MIME types to keep untouched.' },
+                  h('input', {
+                    className: 'zmm-input',
+                    type: 'text',
+                    value: settings.exclude_mime_types,
+                    onChange: (event) => setSettings((current) => Object.assign({}, current, { exclude_mime_types: event.target.value })),
+                  })
+                ),
               ]),
               h('div', { key: 'actions', className: 'zmm-actions' }, [
                 h('button', {
@@ -302,13 +350,30 @@
                 h('div', { key: 'backlog' }, 'Awaiting first pass: ' + payload.queue.unprocessed),
               ]),
             ]),
+            h('section', { key: 'audit', className: 'zmm-card' }, [
+              h('h2', { key: 'title', className: 'zmm-card-title' }, 'Gold standard audit'),
+              h('div', { key: 'auditGrid', className: 'mt-5 grid gap-3 text-sm text-slate-600' }, [
+                h('div', { key: 'missingAlt' }, 'Missing alt text: ' + payload.audit.missing_alt),
+                h('div', { key: 'largeFiles' }, 'Files over 1MB: ' + payload.audit.oversized_files),
+                h('div', { key: 'dimensions' }, 'Oversized dimensions: ' + payload.audit.oversized_dimensions),
+                h('div', { key: 'formats' }, 'Missing WebP/AVIF: ' + payload.audit.missing_modern_formats),
+                h('div', { key: 'excluded' }, 'Protected/excluded assets: ' + payload.audit.excluded_assets),
+                h('div', { key: 'builders' }, 'Builder docs: Elementor ' + payload.audit.builder_usage.elementor_documents + ' / Divi ' + payload.audit.builder_usage.divi_documents),
+              ]),
+              payload.audit.top_offenders && payload.audit.top_offenders.length ? h('div', { key: 'offenders', className: 'zmm-audit-list' },
+                payload.audit.top_offenders.map((item) => h('div', { key: item.id, className: 'zmm-audit-item' }, [
+                  h('strong', { key: 'title' }, '#' + item.id + ' ' + (item.title || item.filename || 'Untitled image')),
+                  h('span', { key: 'issues' }, item.issues.join(' · ')),
+                ]))
+              ) : null,
+            ]),
             h('section', { key: 'notes', className: 'zmm-card' }, [
               h('h2', { key: 'title', className: 'zmm-card-title' }, 'What changed in this pass'),
               h('ul', { key: 'list', className: 'mt-4 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600' }, [
-                h('li', { key: 'item-1' }, 'Compression now saves to a work file first, then only replaces the original when it actually improves the file or dimensions.'),
-                h('li', { key: 'item-2' }, 'Attachment metadata is regenerated after a successful image rewrite.'),
-                h('li', { key: 'item-3' }, 'Alt text generation now avoids generic “image in article” filler phrasing.'),
-                h('li', { key: 'item-4' }, 'The settings page is now served by a React shell backed by AJAX endpoints instead of a classic WordPress settings form.'),
+                h('li', { key: 'item-1' }, 'Compression profiles let you switch between performance, brand quality, and low-bandwidth defaults.'),
+                h('li', { key: 'item-2' }, 'The quality guard prevents low-value rewrites when compression would not save enough.'),
+                h('li', { key: 'item-3' }, 'The audit highlights missing alt text, large files, missing modern formats, LCP candidates, and builder usage.'),
+                h('li', { key: 'item-4' }, 'WP-CLI commands are available as wp zeromass report, queue, process-queue, optimize, and restore.'),
               ]),
             ]),
           ]),

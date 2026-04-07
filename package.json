@@ -1,6 +1,6 @@
 {
   "name": "foundation-zero-mass",
-  "version": "8.0.0",
+  "version": "8.1.0",
   "private": true,
   "scripts": {
     "build:admin-css": "tailwindcss -i ./src/admin-app.css -o ./assets/admin-app.css --minify"

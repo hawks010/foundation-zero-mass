@@ -10,6 +10,11 @@ Foundation: Zero Mass is Inkfire's WordPress media optimization plugin for safe 
 - Regenerates WordPress attachment metadata after successful rewrites
 - Creates optional backup copies for restore workflows
 - Generates concise alt text from filenames and parent context
+- Adds compression profiles for balanced, performance, brand-quality, and low-bandwidth use cases
+- Protects brand assets, logos, QR codes, badges, and configured exclusions from destructive rewrites
+- Reports missing alt text, oversized files, missing modern formats, LCP candidates, and builder usage
+- Adds LCP preload/fetch-priority hints for likely featured hero images
+- Provides WP-CLI commands for reports, queueing, one-off optimization, restore, and queue processing
 - Provides a React-powered admin dashboard for settings and queue visibility
 
 ## Development
@@ -28,6 +33,16 @@ npm run build:admin-css
 ```bash
 php -l zero-mass-media.php
 node --check assets/admin-app.js
+```
+
+### WP-CLI
+
+```bash
+wp zeromass report
+wp zeromass queue --limit=100
+wp zeromass process-queue
+wp zeromass optimize <attachment-id>
+wp zeromass restore <attachment-id>
 ```
 
 ## Update delivery

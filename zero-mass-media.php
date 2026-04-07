@@ -3,7 +3,7 @@
  * Plugin Name:       Foundation: Zero Mass
  * Plugin URI:        https://inkfire.co.uk
  * Description:       Advanced image optimization with LQIP, smart WebP/AVIF conversion, and accessibility features.
- * Version:           8.0.0
+ * Version:           8.1.0
  * Author:            Inkfire Limited
  * Author URI:        https://inkfire.co.uk
  * License:           GPLv2 or later
@@ -16,7 +16,7 @@
 defined('ABSPATH') || exit;
 
 // Constants
-define('ZMM_VERSION', '8.0.0');
+define('ZMM_VERSION', '8.1.0');
 define('ZMM_FILE', __FILE__);
 define('ZMM_PATH', plugin_dir_path(ZMM_FILE));
 define('ZMM_URL', plugin_dir_url(ZMM_FILE));
@@ -54,9 +54,17 @@ final class Zero_Mass_Media {
             'keep_original_backup' => '1',
             'auto_generate_alt' => '1',
             'overall_quality' => 'recommended',
+            'compression_profile' => 'balanced',
             'max_width' => 1920,
             'max_height' => 1920,
+            'quality_guard_min_saving' => 3,
             'enable_lqip' => '1',
+            'enable_lcp_preload' => '1',
+            'enable_builder_audit' => '1',
+            'protect_brand_assets' => '1',
+            'exclude_attachment_ids' => '',
+            'exclude_filename_patterns' => 'logo,brand,icon,qr,badge,signature,ico',
+            'exclude_mime_types' => 'image/svg+xml',
             'queue_batch_size' => 3,
             'queue_schedule' => 'zmm_every_fifteen_minutes',
             'cron_schedule' => 'daily',
@@ -99,9 +107,17 @@ final class Zero_Mass_Media {
         add_action(ZMM_BACKUP_HOOK, [$this, 'run_backup_cleanup']);
         add_filter('the_content', [$this, 'replace_images_with_picture_tags'], 20);
         add_action('wp_footer', [$this, 'add_lazy_load_script']);
+        add_action('wp_head', [$this, 'print_lcp_preload_hint'], 1);
+        add_filter('wp_get_attachment_image_attributes', [$this, 'adjust_lcp_image_attributes'], 10, 3);
         add_filter('attachment_fields_to_edit', [$this, 'add_decorative_field'], 10, 2);
         add_filter('attachment_fields_to_save', [$this, 'save_decorative_field'], 10, 2);
         add_filter('attachment_fields_to_edit', [$this, 'add_actions_to_grid_view_modal'], 11, 2);
+        if (defined('WP_CLI') && WP_CLI) {
+            add_action('cli_init', [$this, 'register_wp_cli_commands']);
+            if (class_exists('WP_CLI')) {
+                $this->register_wp_cli_commands();
+            }
+        }
     }
 
     public static function activate() {
@@ -259,6 +275,9 @@ final class Zero_Mass_Media {
             'keep_original_backup',
             'auto_generate_alt',
             'enable_lqip',
+            'enable_lcp_preload',
+            'enable_builder_audit',
+            'protect_brand_assets',
         ];
 
         $new_input = $defaults;
@@ -272,6 +291,12 @@ final class Zero_Mass_Media {
             ['recommended', 'high', 'highest'],
             true
         ) ? $input['overall_quality'] : $defaults['overall_quality'];
+
+        $new_input['compression_profile'] = in_array(
+            $input['compression_profile'] ?? '',
+            ['balanced', 'maximum_performance', 'brand_quality', 'accessibility_low_bandwidth'],
+            true
+        ) ? $input['compression_profile'] : $defaults['compression_profile'];
 
         $new_input['cron_schedule'] = in_array(
             $input['cron_schedule'] ?? '',
@@ -287,8 +312,12 @@ final class Zero_Mass_Media {
 
         $new_input['max_width'] = max(320, absint($input['max_width'] ?? $defaults['max_width']));
         $new_input['max_height'] = max(320, absint($input['max_height'] ?? $defaults['max_height']));
+        $new_input['quality_guard_min_saving'] = max(0, min(50, absint($input['quality_guard_min_saving'] ?? $defaults['quality_guard_min_saving'])));
         $new_input['backup_cleanup_days'] = absint($input['backup_cleanup_days'] ?? $defaults['backup_cleanup_days']);
         $new_input['queue_batch_size'] = max(1, min(25, absint($input['queue_batch_size'] ?? $defaults['queue_batch_size'])));
+        $new_input['exclude_attachment_ids'] = sanitize_text_field(wp_unslash($input['exclude_attachment_ids'] ?? $defaults['exclude_attachment_ids']));
+        $new_input['exclude_filename_patterns'] = sanitize_text_field(wp_unslash($input['exclude_filename_patterns'] ?? $defaults['exclude_filename_patterns']));
+        $new_input['exclude_mime_types'] = sanitize_text_field(wp_unslash($input['exclude_mime_types'] ?? $defaults['exclude_mime_types']));
 
         return $new_input;
     }
@@ -326,6 +355,181 @@ final class Zero_Mass_Media {
         return (int) $query->found_posts;
     }
 
+    private function parse_csv_setting($value) {
+        if (!is_string($value) || '' === trim($value)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('trim', explode(',', $value))));
+    }
+
+    private function get_excluded_attachment_ids() {
+        return array_values(array_filter(array_map('absint', $this->parse_csv_setting($this->options['exclude_attachment_ids'] ?? ''))));
+    }
+
+    private function get_excluded_mime_types() {
+        return array_map('strtolower', $this->parse_csv_setting($this->options['exclude_mime_types'] ?? ''));
+    }
+
+    private function get_excluded_filename_patterns() {
+        return array_map('strtolower', $this->parse_csv_setting($this->options['exclude_filename_patterns'] ?? ''));
+    }
+
+    private function is_likely_brand_asset($attachment_id) {
+        $filepath = get_attached_file($attachment_id);
+        $name = strtolower($filepath ? wp_basename($filepath) : get_the_title($attachment_id));
+
+        foreach (['logo', 'brand', 'icon', 'badge', 'qr', 'signature', 'ico'] as $needle) {
+            if (false !== strpos($name, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function is_attachment_excluded($attachment_id) {
+        $attachment_id = absint($attachment_id);
+        if (!$attachment_id) {
+            return false;
+        }
+
+        if (in_array($attachment_id, $this->get_excluded_attachment_ids(), true)) {
+            return __('Excluded by attachment ID.', 'zero-mass-media');
+        }
+
+        $mime_type = strtolower((string) get_post_mime_type($attachment_id));
+        if ($mime_type && in_array($mime_type, $this->get_excluded_mime_types(), true)) {
+            return __('Excluded by MIME type.', 'zero-mass-media');
+        }
+
+        $filepath = get_attached_file($attachment_id);
+        $filename = strtolower($filepath ? wp_basename($filepath) : get_the_title($attachment_id));
+        foreach ($this->get_excluded_filename_patterns() as $pattern) {
+            if ('' !== $pattern && false !== strpos($filename, $pattern)) {
+                return sprintf(__('Excluded by filename pattern: %s', 'zero-mass-media'), $pattern);
+            }
+        }
+
+        if (!empty($this->options['protect_brand_assets']) && $this->is_likely_brand_asset($attachment_id)) {
+            return __('Protected brand/logo asset.', 'zero-mass-media');
+        }
+
+        return false;
+    }
+
+    private function get_modern_format_paths($attachment_id) {
+        $filepath = get_attached_file($attachment_id);
+        if (!$filepath) {
+            return ['webp' => '', 'avif' => ''];
+        }
+
+        $base_path = pathinfo($filepath, PATHINFO_DIRNAME) . '/' . pathinfo($filepath, PATHINFO_FILENAME);
+        return [
+            'webp' => $base_path . '.webp',
+            'avif' => $base_path . '.avif',
+        ];
+    }
+
+    private function get_featured_image_ids() {
+        global $wpdb;
+
+        $ids = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT DISTINCT meta_value FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value REGEXP '^[0-9]+$'",
+                '_thumbnail_id'
+            )
+        );
+
+        return array_map('absint', $ids);
+    }
+
+    private function get_builder_usage_summary() {
+        if (empty($this->options['enable_builder_audit'])) {
+            return ['elementor_documents' => 0, 'divi_documents' => 0];
+        }
+
+        global $wpdb;
+
+        return [
+            'elementor_documents' => (int) $wpdb->get_var("SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta} WHERE meta_key = '_elementor_data' AND meta_value <> ''"),
+            'divi_documents'      => (int) $wpdb->get_var("SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta} WHERE meta_key = '_et_pb_use_builder' AND meta_value = 'on'"),
+        ];
+    }
+
+    public function get_gold_standard_report($limit = 8) {
+        $query = new WP_Query($this->get_image_attachment_query_args([
+            'posts_per_page' => -1,
+        ]));
+
+        $featured_ids = $this->get_featured_image_ids();
+        $report = [
+            'total_images' => 0,
+            'missing_alt' => 0,
+            'oversized_files' => 0,
+            'oversized_dimensions' => 0,
+            'missing_modern_formats' => 0,
+            'excluded_assets' => 0,
+            'lcp_candidates' => count($featured_ids),
+            'builder_usage' => $this->get_builder_usage_summary(),
+            'top_offenders' => [],
+        ];
+
+        foreach ($query->posts as $attachment_id) {
+            $report['total_images']++;
+
+            $filepath = get_attached_file($attachment_id);
+            $filesize = ($filepath && file_exists($filepath)) ? filesize($filepath) : 0;
+            $dimensions = $filepath ? @getimagesize($filepath) : false;
+            $alt_text = get_post_meta($attachment_id, '_wp_attachment_image_alt', true);
+            $format_paths = $this->get_modern_format_paths($attachment_id);
+            $is_excluded = $this->is_attachment_excluded($attachment_id);
+            $issues = [];
+
+            if ($is_excluded) {
+                $report['excluded_assets']++;
+                $issues[] = $is_excluded;
+            }
+
+            if ('' === trim((string) $alt_text) && !get_post_meta($attachment_id, '_zmm_is_decorative', true)) {
+                $report['missing_alt']++;
+                $issues[] = __('Missing alt text.', 'zero-mass-media');
+            }
+
+            if ($filesize > MB_IN_BYTES) {
+                $report['oversized_files']++;
+                $issues[] = __('File is over 1MB.', 'zero-mass-media');
+            }
+
+            if ($dimensions && ($dimensions[0] > (int) $this->options['max_width'] || $dimensions[1] > (int) $this->options['max_height'])) {
+                $report['oversized_dimensions']++;
+                $issues[] = __('Dimensions exceed the current profile bounds.', 'zero-mass-media');
+            }
+
+            if (!$is_excluded && !file_exists($format_paths['webp']) && !file_exists($format_paths['avif'])) {
+                $report['missing_modern_formats']++;
+                $issues[] = __('No WebP or AVIF alternative found.', 'zero-mass-media');
+            }
+
+            if (!empty($issues)) {
+                $report['top_offenders'][] = [
+                    'id' => $attachment_id,
+                    'title' => get_the_title($attachment_id),
+                    'filename' => $filepath ? wp_basename($filepath) : '',
+                    'size' => $filesize,
+                    'issues' => array_slice($issues, 0, 3),
+                ];
+            }
+        }
+
+        usort($report['top_offenders'], function ($a, $b) {
+            return $b['size'] <=> $a['size'];
+        });
+        $report['top_offenders'] = array_slice($report['top_offenders'], 0, max(1, absint($limit)));
+
+        return $report;
+    }
+
     private function get_queue_summary() {
         return [
             'queued'      => $this->count_attachment_query([
@@ -360,6 +564,7 @@ final class Zero_Mass_Media {
             'settings' => $this->options,
             'stats'    => $this->get_library_stats(),
             'queue'    => $this->get_queue_summary(),
+            'audit'    => $this->get_gold_standard_report(),
             'support'  => [
                 'webp' => wp_image_editor_supports(['mime_type' => 'image/webp']),
                 'avif' => wp_image_editor_supports(['mime_type' => 'image/avif']),
@@ -413,6 +618,9 @@ final class Zero_Mass_Media {
 
         $queued = 0;
         foreach ($query->posts as $attachment_id) {
+            if ($this->is_attachment_excluded($attachment_id)) {
+                continue;
+            }
             if ($this->queue_attachment_for_processing($attachment_id, 'bulk')) {
                 $queued++;
             }
@@ -938,6 +1146,18 @@ final class Zero_Mass_Media {
     }
 
     private function get_quality_settings() {
+        $profile = $this->options['compression_profile'] ?? 'balanced';
+        switch ($profile) {
+            case 'maximum_performance':
+                return ['jpeg' => 76, 'webp' => 74, 'avif' => 66];
+            case 'brand_quality':
+                return ['jpeg' => 92, 'webp' => 90, 'avif' => 86];
+            case 'accessibility_low_bandwidth':
+                return ['jpeg' => 72, 'webp' => 70, 'avif' => 62];
+            case 'balanced':
+                return ['jpeg' => 82, 'webp' => 80, 'avif' => 75];
+        }
+
         $level = $this->options['overall_quality'] ?? 'recommended';
         switch ($level) {
             case 'high': return ['jpeg' => 90, 'webp' => 88, 'avif' => 85];
@@ -1012,6 +1232,17 @@ final class Zero_Mass_Media {
     private function process_image_compression($attachment_id) {
         if (!wp_attachment_is_image($attachment_id)) {
             return new WP_Error('not_an_image', __('The specified attachment is not an image.', 'zero-mass-media'));
+        }
+
+        $exclusion_reason = $this->is_attachment_excluded($attachment_id);
+        if ($exclusion_reason) {
+            update_post_meta($attachment_id, '_zmm_excluded_reason', $exclusion_reason);
+            update_post_meta($attachment_id, '_zmm_queue_status', 'complete');
+            return [
+                'message'       => sprintf(__('Skipped: %s', 'zero-mass-media'), $exclusion_reason),
+                'saved_percent' => 0,
+                'can_restore'   => false,
+            ];
         }
 
         $mime_type = get_post_mime_type($attachment_id);
@@ -1092,8 +1323,10 @@ final class Zero_Mass_Media {
                 $candidate_dimensions[0] < $original_dimensions[0] ||
                 $candidate_dimensions[1] < $original_dimensions[1]
             );
+        $candidate_saved_percent = $original_size > 0 ? (($original_size - $candidate_size) / $original_size) * 100 : 0;
+        $passes_quality_guard = $candidate_saved_percent >= (float) ($this->options['quality_guard_min_saving'] ?? 3);
 
-        if ($candidate_size < $original_size || $was_resized) {
+        if (($candidate_size < $original_size && $passes_quality_guard) || $was_resized) {
             @rename($candidate_path, $original_path);
         } elseif (file_exists($candidate_path)) {
             @unlink($candidate_path);
@@ -1283,6 +1516,88 @@ final class Zero_Mass_Media {
         <?php
     }
 
+    private function get_likely_lcp_attachment_id() {
+        if (is_singular() && has_post_thumbnail()) {
+            return (int) get_post_thumbnail_id();
+        }
+
+        return 0;
+    }
+
+    public function print_lcp_preload_hint() {
+        if (is_admin() || empty($this->options['enable_lcp_preload'])) {
+            return;
+        }
+
+        $attachment_id = $this->get_likely_lcp_attachment_id();
+        if (!$attachment_id || $this->is_attachment_excluded($attachment_id)) {
+            return;
+        }
+
+        $src = wp_get_attachment_image_src($attachment_id, 'full');
+        if (empty($src[0])) {
+            return;
+        }
+
+        printf(
+            '<link rel="preload" as="image" href="%s" fetchpriority="high" data-zero-mass-lcp="1">' . "\n",
+            esc_url($src[0])
+        );
+    }
+
+    public function adjust_lcp_image_attributes($attr, $attachment, $size) {
+        if (empty($this->options['enable_lcp_preload']) || !($attachment instanceof WP_Post)) {
+            return $attr;
+        }
+
+        if ((int) $attachment->ID === $this->get_likely_lcp_attachment_id()) {
+            $attr['fetchpriority'] = 'high';
+            $attr['loading'] = 'eager';
+            $attr['decoding'] = 'async';
+            $attr['data-zero-mass-lcp'] = '1';
+        }
+
+        return $attr;
+    }
+
+    public function process_attachment($attachment_id) {
+        return $this->process_image_compression(absint($attachment_id));
+    }
+
+    public function restore_attachment($attachment_id) {
+        return $this->restore_original_image(absint($attachment_id));
+    }
+
+    public function queue_all_unprocessed($limit = -1) {
+        $query = new WP_Query($this->get_image_attachment_query_args([
+            'posts_per_page' => (int) $limit,
+            'meta_query'     => [[
+                'key'     => '_zmm_processed',
+                'compare' => 'NOT EXISTS',
+            ]],
+        ]));
+
+        $queued = 0;
+        foreach ($query->posts as $attachment_id) {
+            if ($this->is_attachment_excluded($attachment_id)) {
+                continue;
+            }
+            if ($this->queue_attachment_for_processing($attachment_id, 'wp-cli')) {
+                $queued++;
+            }
+        }
+
+        if ($queued > 0) {
+            $this->schedule_queue_runner();
+        }
+
+        return $queued;
+    }
+
+    public function get_queue_report() {
+        return $this->get_queue_summary();
+    }
+
     public function add_decorative_field($form_fields, $post) {
         $is_decorative = get_post_meta($post->ID, '_zmm_is_decorative', true);
         $form_fields['zmm_is_decorative'] = ['label' => __('Decorative Image', 'zero-mass-media'), 'input' => 'html', 'html' => '<label for="attachments-' . $post->ID . '-zmm_is_decorative"><input type="checkbox" id="attachments-' . $post->ID . '-zmm_is_decorative" name="attachments[' . $post->ID . '][zmm_is_decorative]" value="1" ' . checked($is_decorative, 1, false) . ' /> Check this if the image is purely decorative and does not need alt text.</label>', 'helps' => __('This will set an empty alt tag (alt="") so screen readers ignore it.', 'zero-mass-media')];
@@ -1461,6 +1776,23 @@ final class Zero_Mass_Media {
                 echo '</p></div>';
             });
         }
+    }
+
+    public function register_wp_cli_commands() {
+        static $registered = false;
+
+        if ($registered) {
+            return;
+        }
+
+        $cli_file = ZMM_PATH . 'includes/class-wp-cli-command.php';
+        if (!file_exists($cli_file) || !class_exists('WP_CLI')) {
+            return;
+        }
+
+        require_once $cli_file;
+        \WP_CLI::add_command('zeromass', 'FoundationZeroMass\\WP_CLI_Command');
+        $registered = true;
     }
 
     /**
