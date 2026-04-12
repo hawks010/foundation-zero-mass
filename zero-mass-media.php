@@ -3,8 +3,8 @@
  * Plugin Name:       Foundation: Zero Mass
  * Plugin URI:        https://inkfire.co.uk
  * Description:       Advanced image optimization with LQIP, smart WebP/AVIF conversion, and accessibility features.
- * Version:           8.1.1
- * Author:            Inkfire Limited
+ * Version:           8.1.2
+ * Author:            Sonny x Inkfire
  * Author URI:        https://inkfire.co.uk
  * License:           GPLv2 or later
  * Text Domain:       zero-mass-media
@@ -16,7 +16,7 @@
 defined('ABSPATH') || exit;
 
 // Constants
-define('ZMM_VERSION', '8.1.1');
+define('ZMM_VERSION', '8.1.2');
 define('ZMM_FILE', __FILE__);
 define('ZMM_PATH', plugin_dir_path(ZMM_FILE));
 define('ZMM_URL', plugin_dir_url(ZMM_FILE));

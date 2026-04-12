@@ -3,7 +3,7 @@ Contributors: inkfire
 Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 8.1.1
+Stable tag: 8.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -36,7 +36,7 @@ Features include:
 
 == Changelog ==
 
-= 8.1.1 =
+= 8.1.2 =
 * Added Large File Watchdog to flag and auto-queue uploads above the configurable oversized file threshold.
 * Added oversized pending counts and dynamic threshold labels to the admin audit.
 
