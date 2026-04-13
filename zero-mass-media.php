@@ -3,7 +3,7 @@
  * Plugin Name:       Foundation: Zero Mass
  * Plugin URI:        https://inkfire.co.uk
  * Description:       Advanced image optimization with LQIP, smart WebP/AVIF conversion, and accessibility features.
- * Version:           8.1.3
+ * Version:           8.1.4
  * Author:            Sonny x Inkfire
  * Author URI:        https://inkfire.co.uk
  * License:           GPLv2 or later
@@ -16,16 +16,155 @@
 defined('ABSPATH') || exit;
 
 // Constants
-define('ZMM_VERSION', '8.1.3');
+define('ZMM_VERSION', '8.1.4');
 define('ZMM_FILE', __FILE__);
 define('ZMM_PATH', plugin_dir_path(ZMM_FILE));
 define('ZMM_URL', plugin_dir_url(ZMM_FILE));
 define('ZMM_SETTINGS_SLUG', 'foundation-zero-mass');
+define('ZMM_CORE_ADDON_SLUG', 'foundation-zero-mass');
+define('ZMM_MIN_CORE_VERSION', '0.1.0');
 define('ZMM_QUEUE_HOOK', 'zmm_process_queue');
 define('ZMM_VERIFY_HOOK', 'zmm_daily_verification');
 define('ZMM_BACKUP_HOOK', 'zmm_backup_cleanup');
 
 require_once ZMM_PATH . 'includes/class-github-updater.php';
+
+function zmm_core_is_available(): bool {
+    return function_exists('foundation_core_register_addon')
+        && defined('FOUNDATION_CORE_VERSION')
+        && version_compare(FOUNDATION_CORE_VERSION, ZMM_MIN_CORE_VERSION, '>=');
+}
+
+function zmm_log_to_core(string $level, string $event, array $context = []): void {
+    if (function_exists('foundation_core_log_event')) {
+        foundation_core_log_event($level, $event, $context, ZMM_CORE_ADDON_SLUG);
+    }
+}
+
+function zmm_is_isolated_by_core(): bool {
+    if (!function_exists('foundation_core_get_safe_mode_manager')) {
+        return false;
+    }
+
+    $manager = foundation_core_get_safe_mode_manager();
+    return is_object($manager)
+        && method_exists($manager, 'is_isolated')
+        && $manager->is_isolated(ZMM_CORE_ADDON_SLUG);
+}
+
+function zmm_register_with_core(): void {
+    if (!function_exists('foundation_core_register_addon')) {
+        return;
+    }
+
+    $result = foundation_core_register_addon([
+        'slug'                  => ZMM_CORE_ADDON_SLUG,
+        'name'                  => 'Foundation: Zero Mass',
+        'version'               => ZMM_VERSION,
+        'type'                  => 'commercial-addon',
+        'channel'               => 'stable',
+        'min_core_version'      => ZMM_MIN_CORE_VERSION,
+        'requires_license'      => true,
+        'admin_page_slug'       => ZMM_SETTINGS_SLUG,
+        'product_url'           => 'https://inkfire.co.uk/',
+        'support_url'           => 'https://inkfire.co.uk/',
+        'docs_url'              => 'https://inkfire.co.uk/',
+        'module_class'          => 'Zero_Mass_Media',
+        'health_check_callback' => 'zmm_health_check',
+        'status'                => zmm_is_isolated_by_core() ? 'isolated' : 'active',
+    ]);
+
+    if (is_wp_error($result)) {
+        zmm_log_to_core(
+            'error',
+            'addon_registration_failed',
+            [
+                'code'    => $result->get_error_code(),
+                'message' => $result->get_error_message(),
+            ]
+        );
+        return;
+    }
+
+    zmm_log_to_core(
+        'info',
+        'addon_registered_with_core',
+        [
+            'version'          => ZMM_VERSION,
+            'min_core_version' => ZMM_MIN_CORE_VERSION,
+        ]
+    );
+}
+add_action('foundation_core_register_addons', 'zmm_register_with_core');
+
+function zmm_health_check(array $addon = [], array $context = [], $registry = null): array {
+    $upload_dir = wp_get_upload_dir();
+    $asset_checks = [
+        'admin_app_js' => file_exists(ZMM_PATH . 'assets/admin-app.js'),
+        'admin_app_css' => file_exists(ZMM_PATH . 'assets/admin-app.css'),
+        'shell_js' => file_exists(ZMM_PATH . 'assets/admin/foundation-admin-shell.js'),
+        'shell_css' => file_exists(ZMM_PATH . 'assets/admin/foundation-admin-shell.css'),
+    ];
+    $missing_assets = array_keys(array_filter($asset_checks, static function ($present) {
+        return !$present;
+    }));
+
+    $options = get_option('zmm_settings', []);
+    $options_ok = is_array($options);
+    $has_image_engine = extension_loaded('imagick') || extension_loaded('gd');
+    $uploads_writable = empty($upload_dir['error']) && !empty($upload_dir['basedir']) && wp_is_writable($upload_dir['basedir']);
+    $state = ($options_ok && $has_image_engine && $uploads_writable && empty($missing_assets)) ? 'ok' : 'degraded';
+
+    return [
+        'state' => $state,
+        'message' => 'ok' === $state
+            ? __('Zero Mass runtime checks passed.', 'zero-mass-media')
+            : __('Zero Mass is running, but one or more runtime checks are degraded.', 'zero-mass-media'),
+        'data' => [
+            'options_ok' => $options_ok,
+            'image_engine' => [
+                'imagick' => extension_loaded('imagick'),
+                'gd' => extension_loaded('gd'),
+                'webp' => wp_image_editor_supports(['mime_type' => 'image/webp']),
+                'avif' => wp_image_editor_supports(['mime_type' => 'image/avif']),
+            ],
+            'uploads_writable' => $uploads_writable,
+            'missing_assets' => $missing_assets,
+            'queue_scheduled' => (bool) wp_next_scheduled(ZMM_QUEUE_HOOK),
+            'verification_scheduled' => (bool) wp_next_scheduled(ZMM_VERIFY_HOOK),
+            'backup_cleanup_scheduled' => (bool) wp_next_scheduled(ZMM_BACKUP_HOOK),
+        ],
+        'context' => $context,
+    ];
+}
+
+function zmm_core_notice(): void {
+    if (!current_user_can('manage_options') || zmm_core_is_available()) {
+        return;
+    }
+
+    $message = function_exists('foundation_core_register_addon')
+        ? sprintf(
+            /* translators: %s: minimum Foundation Core version. */
+            __('Foundation: Zero Mass is running in legacy mode because Foundation Core is older than %s.', 'zero-mass-media'),
+            ZMM_MIN_CORE_VERSION
+        )
+        : __('Foundation: Zero Mass is running in legacy mode until Foundation Core is installed and active.', 'zero-mass-media');
+
+    echo '<div class="notice notice-warning"><p><strong>Foundation: Zero Mass</strong> — ' . esc_html($message) . '</p></div>';
+}
+add_action('admin_notices', 'zmm_core_notice');
+
+function zmm_safe_mode_notice(): void {
+    if (!current_user_can('manage_options') || !zmm_is_isolated_by_core()) {
+        return;
+    }
+
+    echo '<div class="notice notice-error"><p><strong>Foundation: Zero Mass</strong> — '
+        . esc_html__('This addon is currently isolated by Foundation Core safe mode. Restore it from Foundation > Addons when you are ready to re-enable image optimization runtime hooks.', 'zero-mass-media')
+        . '</p></div>';
+}
+add_action('admin_notices', 'zmm_safe_mode_notice');
 
 final class Zero_Mass_Media {
     
@@ -43,7 +182,24 @@ final class Zero_Mass_Media {
 
     private function __construct() {
         $this->options = $this->get_options();
+        zmm_log_to_core(
+            'info',
+            'addon_bootstrap_started',
+            [
+                'version' => ZMM_VERSION,
+                'core_available' => zmm_core_is_available(),
+            ]
+        );
         $this->add_hooks();
+        zmm_log_to_core(
+            'info',
+            'addon_bootstrap_completed',
+            [
+                'version' => ZMM_VERSION,
+                'admin_ui' => is_admin(),
+                'queue_enabled' => !empty($this->options['process_backlog_via_cron']),
+            ]
+        );
     }
 
     private function get_default_options() {
@@ -137,11 +293,9 @@ final class Zero_Mass_Media {
     public function add_admin_menu() {
         global $admin_page_hooks;
     
-        // This is the standardized shared parent slug for ALL Foundation plugins.
-        $parent_slug = 'foundation-by-inkfire';
+        $parent_slug = $this->get_parent_menu_slug();
     
-        // Check if the parent menu has already been registered by another Foundation plugin.
-        if (empty($admin_page_hooks[$parent_slug])) {
+        if (!$this->uses_core_parent_menu() && empty($admin_page_hooks[$parent_slug])) {
             add_menu_page(
                 __('Foundation by Inkfire', 'zero-mass-media'), // Page Title
                 __('Foundation', 'zero-mass-media'),           // Menu Title
@@ -164,13 +318,21 @@ final class Zero_Mass_Media {
         );
     }
 
+    private function uses_core_parent_menu() {
+        return zmm_core_is_available();
+    }
+
+    private function get_parent_menu_slug() {
+        return $this->uses_core_parent_menu() ? 'foundation-core' : 'foundation-by-inkfire';
+    }
+
     /**
      * Removes the redundant "Foundation" submenu link that WordPress creates by default.
      * This leaves a clean menu with only the plugin pages.
      */
     public function remove_duplicate_submenu_link()
     {
-        $parent_slug = 'foundation-by-inkfire';
+        $parent_slug = $this->get_parent_menu_slug();
         remove_submenu_page($parent_slug, $parent_slug);
     }
 
@@ -1994,4 +2156,14 @@ final class Zero_Mass_Media {
 register_activation_hook(ZMM_FILE, ['Zero_Mass_Media', 'activate']);
 register_deactivation_hook(ZMM_FILE, ['Zero_Mass_Media', 'deactivate']);
 \FoundationZeroMass\Github_Updater::instance();
-Zero_Mass_Media::get_instance();
+if (zmm_is_isolated_by_core()) {
+    zmm_log_to_core(
+        'warning',
+        'addon_bootstrap_skipped_safe_mode',
+        [
+            'reason' => 'core_safe_mode_isolated',
+        ]
+    );
+} else {
+    Zero_Mass_Media::get_instance();
+}

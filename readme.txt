@@ -3,7 +3,7 @@ Contributors: inkfire
 Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 8.1.3
+Stable tag: 8.1.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,9 @@ Features include:
 3. Open **Foundation > Zero Mass** to configure optimization and queue behavior.
 
 == Changelog ==
+
+= 8.1.4 =
+* Added Foundation Core registration, diagnostics breadcrumbs, lightweight health checks, Core menu handoff, and safe-mode isolation support.
 
 = 8.1.3 =
 * Mounted the existing React image optimisation dashboard inside the shared Foundation admin shell.
