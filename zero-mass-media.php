@@ -3,7 +3,7 @@
  * Plugin Name:       Foundation: Zero Mass
  * Plugin URI:        https://inkfire.co.uk
  * Description:       Advanced image optimization with LQIP, smart WebP/AVIF conversion, and accessibility features.
- * Version:           8.1.2
+ * Version:           8.1.3
  * Author:            Sonny x Inkfire
  * Author URI:        https://inkfire.co.uk
  * License:           GPLv2 or later
@@ -16,7 +16,7 @@
 defined('ABSPATH') || exit;
 
 // Constants
-define('ZMM_VERSION', '8.1.2');
+define('ZMM_VERSION', '8.1.3');
 define('ZMM_FILE', __FILE__);
 define('ZMM_PATH', plugin_dir_path(ZMM_FILE));
 define('ZMM_URL', plugin_dir_url(ZMM_FILE));
@@ -183,8 +183,9 @@ final class Zero_Mass_Media {
     }
 
     public function render_settings_page() {
-        echo '<div class="wrap zmm-settings-wrap">';
-        echo '<div id="zmm-admin-app"></div>';
+        echo '<div class="wrap foundation-admin-wrap zmm-settings-wrap">';
+        echo '<div id="foundation-admin-app"><p>' . esc_html__('Loading Foundation shell...', 'zero-mass-media') . '</p></div>';
+        echo '<template id="foundation-zero-mass-workspace"><div id="zmm-admin-app"></div></template>';
         echo '<noscript><p>' . esc_html__('Foundation: Zero Mass now uses a JavaScript-powered admin app. Please enable JavaScript to manage settings.', 'zero-mass-media') . '</p></noscript>';
         echo '</div>';
     }
@@ -595,6 +596,70 @@ final class Zero_Mass_Media {
         ];
     }
 
+    private function get_shell_config() {
+        $payload = $this->get_dashboard_payload();
+        $stats = $payload['stats'];
+        $queue = $payload['queue'];
+        $audit = $payload['audit'];
+
+        return [
+            'plugin' => 'zero-mass',
+            'rootId' => 'foundation-admin-app',
+            'eyebrow' => __('Foundation command centre', 'zero-mass-media'),
+            'title' => __('Foundation: Zero Mass', 'zero-mass-media'),
+            'description' => __('The image optimisation React app now runs inside the shared Foundation shell while the existing AJAX actions and zmm_settings storage remain unchanged.', 'zero-mass-media'),
+            'badge' => 'v' . ZMM_VERSION,
+            'themeStorageKey' => 'foundation-zero-mass-theme',
+            'actions' => [
+                [
+                    'label' => __('Queue unprocessed images', 'zero-mass-media'),
+                    'href' => admin_url('admin.php?page=' . ZMM_SETTINGS_SLUG),
+                    'variant' => 'solid',
+                ],
+                [
+                    'label' => __('GitHub backup', 'zero-mass-media'),
+                    'href' => 'https://github.com/hawks010/foundation-zero-mass',
+                    'target' => '_blank',
+                    'variant' => 'ghost',
+                ],
+            ],
+            'metrics' => [
+                [
+                    'label' => __('Library size', 'zero-mass-media'),
+                    'value' => size_format((int) ($stats['current_size'] ?? 0)),
+                    'meta' => __('Current optimized media footprint.', 'zero-mass-media'),
+                ],
+                [
+                    'label' => __('Space saved', 'zero-mass-media'),
+                    'value' => size_format((int) ($stats['total_savings'] ?? 0)),
+                    'meta' => __('Estimated savings from optimized assets.', 'zero-mass-media'),
+                    'tone' => 'accent',
+                ],
+                [
+                    'label' => __('Queue', 'zero-mass-media'),
+                    'value' => number_format_i18n((int) ($queue['queued'] ?? 0)),
+                    'meta' => __('Images waiting for background optimization.', 'zero-mass-media'),
+                ],
+                [
+                    'label' => __('Audit issues', 'zero-mass-media'),
+                    'value' => number_format_i18n((int) ($audit['missing_alt'] ?? 0) + (int) ($audit['oversized_files'] ?? 0) + (int) ($audit['missing_modern_formats'] ?? 0)),
+                    'meta' => __('Accessibility, size, and modern-format findings.', 'zero-mass-media'),
+                    'tone' => 'danger',
+                ],
+            ],
+            'sections' => [
+                [
+                    'id' => 'zero-mass-workspace',
+                    'navLabel' => __('Workspace', 'zero-mass-media'),
+                    'eyebrow' => __('React workspace', 'zero-mass-media'),
+                    'title' => __('Optimisation, audit, and queue controls', 'zero-mass-media'),
+                    'description' => __('This is the existing production Zero Mass React app mounted inside the unified Foundation frame.', 'zero-mass-media'),
+                    'templateId' => 'foundation-zero-mass-workspace',
+                ],
+            ],
+        ];
+    }
+
     public function ajax_get_dashboard_data() {
         check_ajax_referer('zmm-ajax-nonce', 'nonce');
         if (!current_user_can('manage_options')) {
@@ -665,8 +730,15 @@ final class Zero_Mass_Media {
         $is_media_tools_page = in_array($hook, ['media-new.php', 'upload.php', 'post.php', 'post-new.php'], true);
 
         if ($is_settings_page) {
-            wp_enqueue_style('zmm-admin-app-css', ZMM_URL . 'assets/admin-app.css', [], ZMM_VERSION);
-            wp_enqueue_script('zmm-admin-app-js', ZMM_URL . 'assets/admin-app.js', ['wp-element'], ZMM_VERSION, true);
+            wp_enqueue_style('foundation-admin-shell', ZMM_URL . 'assets/admin/foundation-admin-shell.css', [], ZMM_VERSION);
+            wp_enqueue_style('zmm-admin-app-css', ZMM_URL . 'assets/admin-app.css', ['foundation-admin-shell'], ZMM_VERSION);
+            wp_enqueue_script('foundation-admin-shell', ZMM_URL . 'assets/admin/foundation-admin-shell.js', ['wp-element'], ZMM_VERSION, true);
+            wp_add_inline_script(
+                'foundation-admin-shell',
+                'window.foundationAdminShellData = ' . wp_json_encode($this->get_shell_config()) . ';',
+                'before'
+            );
+            wp_enqueue_script('zmm-admin-app-js', ZMM_URL . 'assets/admin-app.js', ['foundation-admin-shell'], ZMM_VERSION, true);
             wp_localize_script('zmm-admin-app-js', 'zmmAdmin', [
                 'ajaxUrl' => admin_url('admin-ajax.php'),
                 'nonce'   => wp_create_nonce('zmm-ajax-nonce'),

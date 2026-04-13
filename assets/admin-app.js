@@ -1,8 +1,10 @@
 (function () {
+  function boot() {
   const rootNode = document.getElementById('zmm-admin-app');
-  if (!rootNode || !window.wp || !window.wp.element || !window.zmmAdmin) {
+  if (!rootNode || rootNode.dataset.zeroMassBooted === '1' || !window.wp || !window.wp.element || !window.zmmAdmin) {
     return;
   }
+  rootNode.dataset.zeroMassBooted = '1';
 
   const { createElement: h, Fragment, useEffect, useMemo, useState } = window.wp.element;
 
@@ -418,4 +420,13 @@
   } else {
     window.wp.element.render(h(App), rootNode);
   }
+  }
+
+  window.addEventListener('foundation-admin:ready', function (event) {
+    if (event.detail && event.detail.plugin === 'zero-mass') {
+      boot();
+    }
+  });
+  document.addEventListener('DOMContentLoaded', boot);
+  boot();
 })();

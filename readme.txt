@@ -3,7 +3,7 @@ Contributors: inkfire
 Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 8.1.2
+Stable tag: 8.1.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,9 @@ Features include:
 3. Open **Foundation > Zero Mass** to configure optimization and queue behavior.
 
 == Changelog ==
+
+= 8.1.3 =
+* Mounted the existing React image optimisation dashboard inside the shared Foundation admin shell.
 
 = 8.1.2 =
 * Added Large File Watchdog to flag and auto-queue uploads above the configurable oversized file threshold.
