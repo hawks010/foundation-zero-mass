@@ -3,7 +3,7 @@
  * Plugin Name:       Foundation: Zero Mass
  * Plugin URI:        https://inkfire.co.uk
  * Description:       Advanced image optimization with LQIP, smart WebP/AVIF conversion, and accessibility features.
- * Version:           8.1.4
+ * Version:           8.1.5
  * Author:            Sonny x Inkfire
  * Author URI:        https://inkfire.co.uk
  * License:           GPLv2 or later
@@ -16,7 +16,7 @@
 defined('ABSPATH') || exit;
 
 // Constants
-define('ZMM_VERSION', '8.1.4');
+define('ZMM_VERSION', '8.1.5');
 define('ZMM_FILE', __FILE__);
 define('ZMM_PATH', plugin_dir_path(ZMM_FILE));
 define('ZMM_URL', plugin_dir_url(ZMM_FILE));
@@ -167,6 +167,9 @@ function zmm_safe_mode_notice(): void {
 add_action('admin_notices', 'zmm_safe_mode_notice');
 
 final class Zero_Mass_Media {
+    private const MAINTENANCE_BATCH_SIZE = 100;
+    private const VERIFY_CURSOR_OPTION = 'zmm_verify_last_attachment_id';
+    private const BACKUP_CURSOR_OPTION = 'zmm_backup_cleanup_last_attachment_id';
     
     private static $instance;
     private $options;
@@ -1278,11 +1281,19 @@ final class Zero_Mass_Media {
             wp_send_json_error(['message' => __('Permission denied.', 'zero-mass-media')]);
         }
 
-        $task = sanitize_key($_POST['task']);
-        $id = intval($_POST['id']);
+        $task = isset($_POST['task']) ? sanitize_key(wp_unslash($_POST['task'])) : '';
+        $id = isset($_POST['id']) ? intval(wp_unslash($_POST['id'])) : 0;
 
         if (empty($task) || $id <= 0) {
             wp_send_json_error(['message' => __('Invalid request.', 'zero-mass-media')]);
+        }
+
+        if ('attachment' !== get_post_type($id)) {
+            wp_send_json_error(['message' => __('Invalid attachment.', 'zero-mass-media')]);
+        }
+
+        if (!current_user_can('edit_post', $id)) {
+            wp_send_json_error(['message' => __('Permission denied for this attachment.', 'zero-mass-media')]);
         }
 
         switch ($task) {
@@ -1550,7 +1561,11 @@ final class Zero_Mass_Media {
         if (!is_writable(dirname($original_filepath))) return new WP_Error('permission_denied', __('Uploads directory is not writable.', 'zero-mass-media'));
         
         if (!empty($this->options['keep_original_backup'])) {
-            $this->create_backup($original_filepath, $attachment_id);
+            $backup_result = $this->create_backup($original_filepath, $attachment_id);
+            if (is_wp_error($backup_result)) {
+                $this->log_error($backup_result->get_error_message(), $attachment_id);
+                return $backup_result;
+            }
         }
         
         $result = $this->process_image_formats($original_filepath, $attachment_id);
@@ -2005,9 +2020,54 @@ final class Zero_Mass_Media {
         }
     }
 
+    private function get_attachment_batch_ids_by_meta_key($meta_key, $after_id = 0, $limit = self::MAINTENANCE_BATCH_SIZE) {
+        global $wpdb;
+
+        $sql = $wpdb->prepare(
+            "SELECT DISTINCT p.ID
+            FROM {$wpdb->posts} p
+            INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+            WHERE p.post_type = %s
+              AND p.post_status = %s
+              AND pm.meta_key = %s
+              AND p.ID > %d
+            ORDER BY p.ID ASC
+            LIMIT %d",
+            'attachment',
+            'inherit',
+            $meta_key,
+            max(0, (int) $after_id),
+            max(1, (int) $limit)
+        );
+
+        return array_map('intval', (array) $wpdb->get_col($sql));
+    }
+
+    private function get_persisted_attachment_batch_ids($meta_key, $cursor_option) {
+        $after_id = max(0, (int) get_option($cursor_option, 0));
+        $ids = $this->get_attachment_batch_ids_by_meta_key($meta_key, $after_id);
+
+        if (empty($ids) && $after_id > 0) {
+            update_option($cursor_option, 0, false);
+            $ids = $this->get_attachment_batch_ids_by_meta_key($meta_key, 0);
+        }
+
+        return $ids;
+    }
+
+    private function advance_attachment_batch_cursor($cursor_option, array $ids) {
+        if (count($ids) < self::MAINTENANCE_BATCH_SIZE) {
+            update_option($cursor_option, 0, false);
+            return;
+        }
+
+        update_option($cursor_option, (int) end($ids), false);
+    }
+
     public function run_daily_verification() {
-        $query = new WP_Query(['post_type' => 'attachment', 'post_status' => 'inherit', 'posts_per_page' => 100, 'fields' => 'ids', 'meta_query' => [['key' => '_zmm_processed', 'compare' => 'EXISTS']]]);
-        foreach ($query->posts as $attachment_id) {
+        $attachment_ids = $this->get_persisted_attachment_batch_ids('_zmm_processed', self::VERIFY_CURSOR_OPTION);
+
+        foreach ($attachment_ids as $attachment_id) {
             $filepath = get_attached_file($attachment_id);
             if ($filepath && file_exists($filepath)) {
                 if (is_wp_error($this->verify_processed_files($filepath, $attachment_id))) {
@@ -2017,26 +2077,52 @@ final class Zero_Mass_Media {
                 }
             }
         }
+
+        $this->advance_attachment_batch_cursor(self::VERIFY_CURSOR_OPTION, $attachment_ids);
     }
 
     public function run_backup_cleanup($manual_run = false) {
         $cleanup_days = (int) ($this->options['backup_cleanup_days'] ?? 30);
         if ($cleanup_days <= 0) return 0;
-        $query = new WP_Query(['post_type' => 'attachment', 'post_status' => 'inherit', 'posts_per_page' => 100, 'fields' => 'ids', 'meta_query' => [['key' => '_zmm_backup_path', 'compare' => 'EXISTS']]]);
         $deleted_count = 0;
-        foreach ($query->posts as $attachment_id) {
-            $backup_path = get_post_meta($attachment_id, '_zmm_backup_path', true);
-            if ($backup_path && file_exists($backup_path)) {
-                if (filemtime($backup_path) < strtotime("-{$cleanup_days} days")) {
-                    if (@unlink($backup_path)) {
-                        delete_post_meta($attachment_id, '_zmm_backup_path');
-                        $deleted_count++;
+
+        $process_batch = function(array $attachment_ids) use ($cleanup_days, &$deleted_count) {
+            foreach ($attachment_ids as $attachment_id) {
+                $backup_path = get_post_meta($attachment_id, '_zmm_backup_path', true);
+                if ($backup_path && file_exists($backup_path)) {
+                    if (filemtime($backup_path) < strtotime("-{$cleanup_days} days")) {
+                        if (@unlink($backup_path)) {
+                            delete_post_meta($attachment_id, '_zmm_backup_path');
+                            $deleted_count++;
+                        }
                     }
+                } else if ($backup_path) {
+                    delete_post_meta($attachment_id, '_zmm_backup_path');
                 }
-            } else if ($backup_path) {
-                delete_post_meta($attachment_id, '_zmm_backup_path');
             }
+        };
+
+        if ($manual_run) {
+            $after_id = 0;
+
+            do {
+                $attachment_ids = $this->get_attachment_batch_ids_by_meta_key('_zmm_backup_path', $after_id);
+                if (empty($attachment_ids)) {
+                    break;
+                }
+
+                $process_batch($attachment_ids);
+                $after_id = (int) end($attachment_ids);
+            } while (count($attachment_ids) === self::MAINTENANCE_BATCH_SIZE);
+
+            update_option(self::BACKUP_CURSOR_OPTION, 0, false);
+            return $deleted_count;
         }
+
+        $attachment_ids = $this->get_persisted_attachment_batch_ids('_zmm_backup_path', self::BACKUP_CURSOR_OPTION);
+        $process_batch($attachment_ids);
+        $this->advance_attachment_batch_cursor(self::BACKUP_CURSOR_OPTION, $attachment_ids);
+
         return $deleted_count;
     }
 

@@ -3,7 +3,7 @@ Contributors: inkfire
 Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 8.1.4
+Stable tag: 8.1.5
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,11 @@ Features include:
 3. Open **Foundation > Zero Mass** to configure optimization and queue behavior.
 
 == Changelog ==
+
+= 8.1.5 =
+* Security: require attachment-level edit capability before single-image optimise, restore, or alt-text actions can run.
+* Fix: stop image rewrites immediately when original-backup creation fails.
+* Reliability: advance verification and backup cleanup through the media library with persistent batch cursors instead of reprocessing only the first 100 attachments.
 
 = 8.1.4 =
 * Added Foundation Core registration, diagnostics breadcrumbs, lightweight health checks, Core menu handoff, and safe-mode isolation support.
